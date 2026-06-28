@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import RPi.GPIO as GPIO
+import time
+import random
+
+# ===================== CONFIGURABLE PARAMETERS =====================
+DISTANCE_THRESHOLD = 20.0      # cm, obstacle distance to trigger avoidance
+MOTOR_SPEED = 25               # PWM duty cycle (0-100)
+TURN_DURATION = 0.5            # seconds to turn
+BACKUP_DURATION = 0.2          # seconds to reverse before turning
+LOOP_INTERVAL = 0.1            # seconds between control cycles
+SONAR_TIMEOUT = 0.1            # seconds for echo timeout
+
+# GPIO pins
+TRIG = 23
+ECHO = 24
+ENA = 12
+IN1 = 5
+IN2 = 6
+ENB = 13
+IN3 = 20
+IN4 = 21
+
+# ===================== GPIO SETUP =====================
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+GPIO.setup(TRIG, GPIO.OUT)
+GPIO.setup(ECHO, GPIO.IN)
+
+GPIO.setup(IN1, GPIO.OUT)
+GPIO.setup(IN2, GPIO.OUT)
+GPIO.setup(IN3, GPIO.OUT)
+GPIO.setup(IN4, GPIO.OUT)
+GPIO.setup(ENA, GPIO.OUT)
+GPIO.setup(ENB, GPIO.OUT)
+
+pwm_left = GPIO.PWM(ENA, 1000)
+pwm_right = GPIO.PWM(ENB, 1000)
+pwm_left.start(0)
+pwm_right.start(0)
+
+# ===================== DISTANCE MEASUREMENT =====================
+def get_distance():
+    """
+    Measure distance using HC-SR04.
+    Returns distance in cm, or 999.0 if timeout.
+    """
+    # Trigger pulse
+    GPIO.output(TRIG, False)
+    time.sleep(0.000002)
+    GPIO.output(TRIG, True)
+    time.sleep(0.000010)
+    GPIO.output(TRIG, False)
+
+    # Wait for echo start
+    start_time = time.time()
+    while GPIO.input(ECHO) == 0:
+        if time.time() - start_time > SONAR_TIMEOUT:
+            return 999.0
+    pulse_start = time.time()
+
+    # Wait for echo end
+    while GPIO.input(ECHO) == 1:
+        if time.time() - start_time > SONAR_TIMEOUT:
+            return 999.0
+    pulse_end = time.time()
+
+    duration = pulse_end - pulse_start
+    distance = duration * 34300 / 2   # speed of sound = 343 m/s
+    return distance
+
+# ===================== MOTOR CONTROL =====================
+def forward(speed=MOTOR_SPEED):
+    GPIO.output(IN1, GPIO.HIGH)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.HIGH)
+    GPIO.output(IN4, GPIO.LOW)
+    pwm_left.ChangeDutyCycle(speed)
+    pwm_right.ChangeDutyCycle(speed)
+
+def backward(speed=MOTOR_SPEED):
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.HIGH)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.HIGH)
+    pwm_left.ChangeDutyCycle(speed)
+    pwm_right.ChangeDutyCycle(speed)
+
+def turn_left(speed=MOTOR_SPEED):
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.HIGH)
+    GPIO.output(IN3, GPIO.HIGH)
+    GPIO.output(IN4, GPIO.LOW)
+    pwm_left.ChangeDutyCycle(speed)
+    pwm_right.ChangeDutyCycle(speed)
+
+def turn_right(speed=MOTOR_SPEED):
+    GPIO.output(IN1, GPIO.HIGH)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.HIGH)
+    pwm_left.ChangeDutyCycle(speed)
+    pwm_right.ChangeDutyCycle(speed)
+
+def stop():
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.LOW)
+    pwm_left.ChangeDutyCycle(0)
+    pwm_right.ChangeDutyCycle(0)
+
+# ===================== MAIN LOOP =====================
+def main():
+    try:
+        print("Obstacle avoidance robot started. Press Ctrl+C to stop.")
+        time.sleep(1)
+
+        while True:
+            dist = get_distance()
+            print(f"Distance: {dist:.1f} cm")
+
+            if dist < DISTANCE_THRESHOLD and dist > 0:
+                print("Obstacle detected! Avoiding...")
+                # Stop and back up slightly
+                stop()
+                time.sleep(0.1)
+                backward()
+                time.sleep(BACKUP_DURATION)
+                stop()
+                time.sleep(0.05)
+
+                # Randomly choose turn direction
+                if random.choice([True, False]):
+                    print("Turning left")
+                    turn_left()
+                else:
+                    print("Turning right")
+                    turn_right()
+                time.sleep(TURN_DURATION)
+                stop()
+                time.sleep(0.05)
+            else:
+                # No obstacle, go forward
+                forward()
+
+            time.sleep(LOOP_INTERVAL)
+
+    except KeyboardInterrupt:
+        print("\nInterrupted by user.")
+    finally:
+        stop()
+        pwm_left.stop()
+        pwm_right.stop()
+        GPIO.cleanup()
+        print("GPIO cleaned up. Exiting.")
+
+if __name__ == "__main__":
+    main()
